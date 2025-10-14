@@ -201,7 +201,7 @@ def calculate_metrics_t4(data: List[Dict[str, str]], dataset: str) -> Dict[str, 
     total_predictions = len(data)
     accuracy = total_correct / total_predictions if total_predictions > 0 else 0
     
-    metrics['overall'] = {'precision': accuracy, 'recall': accuracy, 'f1': accuracy, 'accuracy': accuracy, 'dataset': dataset}
+    metrics['overall'] = {'precision': precision, 'recall': recall, 'f1': f1, 'accuracy': accuracy, 'dataset': dataset}
     return metrics
 
 def load_results(task: str, dataset_filter: str) -> Dict[str, list]:
