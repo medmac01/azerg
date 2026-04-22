@@ -33,7 +33,6 @@ def clean_paragraph(paragraph: str) -> str:
     paragraph = paragraph.encode("utf-8").decode()
     paragraph = paragraph.replace("[.]", ".")
     paragraph = paragraph.replace(".]", ".")
-    paragraph = paragraph.replace("\\[.\\]", ".")
     paragraph = paragraph.replace("[:]", ":")
     paragraph = paragraph.replace("hxxps", "https")
     paragraph = paragraph.replace("hXXps", "https")
