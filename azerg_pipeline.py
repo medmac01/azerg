@@ -28,6 +28,22 @@ DEFAULT_T1_INSTRUCTION = (
     "<entities>Entity1|Entity2|...|EntityN</entities>"
 )
 
+DEFAULT_TASK_INSTRUCTIONS = {
+    "T1": DEFAULT_T1_INSTRUCTION,
+    "T2": (
+        "Identify the most relevant STIX cyber threat entity type mentioned in the CTI report and return only this format: "
+        "<entity_type>STIX_ENTITY_TYPE</entity_type>"
+    ),
+    "T3": (
+        "Decide whether the report describes a direct relationship between the extracted cyber threat entities and the malicious activity. "
+        "Return only this format: <related>YES or NO</related>"
+    ),
+    "T4": (
+        "Choose the single best STIX relationship label for the report from this set: uses, communicates-with, downloads. "
+        "Return only this format: <label>RELATIONSHIP_LABEL</label>"
+    ),
+}
+
 
 def clean_paragraph(paragraph: str) -> str:
     if not isinstance(paragraph, str):
@@ -171,7 +187,7 @@ class OpenAICompatibleBackend(ModelBackend):
 
 
 class OllamaBackend(ModelBackend):
-    def __init__(self, base_url: str = "http://localhost:11434", timeout_seconds: int = 60):
+    def __init__(self, base_url: str = "http://10.50.28.25:11434", timeout_seconds: int = 60):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
@@ -184,6 +200,7 @@ class OllamaBackend(ModelBackend):
                 "temperature": params.get("temperature", 0.7),
                 "top_p": params.get("top_p", 0.95),
                 "num_predict": params.get("max_tokens", 512),
+                "num_ctx": 4096,
             },
         }
         req = request.Request(
@@ -222,6 +239,30 @@ def build_prompt(instruction: str, input_text: str) -> str:
     return f"Instruction: {instruction}\n\nInput: {clean_paragraph(input_text)}\n\nResponse:"
 
 
+def run_task_prediction(
+    backend: ModelBackend,
+    input_text: str,
+    model_name: str,
+    task: str,
+    instruction: Optional[str] = None,
+) -> Dict[str, Any]:
+    task_instruction = instruction or DEFAULT_TASK_INSTRUCTIONS.get(task, "")
+    prompt = build_prompt(instruction=task_instruction, input_text=input_text)
+    params = TASK_PARAMETERS.get(task, TASK_PARAMETERS["T1"])
+
+    try:
+        raw_prediction = backend.complete(prompt=prompt, model_name=model_name, params=params)
+    except Exception as e:
+        logging.warning(f"Model call failed for task {task} on input hash {hash(input_text)}: {e}")
+        raw_prediction = ""
+
+    return {
+        "instruction": task_instruction,
+        "raw_prediction": raw_prediction,
+        "parsed_prediction": parse_response(raw_prediction, task),
+    }
+
+
 def post_process_t1_prediction(input_text: str, predicted_entities: List[str]) -> List[str]:
     external_iocs = get_iocs_set(text=input_text)
     predicted_labels = set()
@@ -229,6 +270,53 @@ def post_process_t1_prediction(input_text: str, predicted_entities: List[str]) -
         if item and item in input_text:
             predicted_labels.add(item)
     return list(predicted_labels.union(external_iocs))
+
+
+def normalize_relationship_label(label: str, input_text: str = "") -> str:
+    normalized = (label or "").strip().lower().replace("_", "-")
+    if normalized in {"use", "uses"}:
+        return "uses"
+    if normalized in {"communicates-with", "beacons-to", "exfiltrates-to"}:
+        return "communicates-with"
+    if normalized in {"downloads", "drops"}:
+        return "downloads"
+
+    input_lower = (input_text or "").lower()
+    if any(token in input_lower for token in ["download", "drop", "copy", "transfer", "retrieve"]):
+        return "downloads"
+    if any(token in input_lower for token in ["beacon", "communicat", "exfiltrat"]):
+        return "communicates-with"
+    if normalized:
+        return "uses"
+    return ""
+
+
+def build_stix_output(
+    entities: List[str],
+    entity_type: str,
+    related: str,
+    relationship_label: str,
+    input_text: str = "",
+) -> Dict[str, Any]:
+    related_normalized = (related or "").strip().upper()
+    relationship_label_normalized = normalize_relationship_label(relationship_label, input_text=input_text)
+
+    relationships: List[Dict[str, Any]] = []
+    if related_normalized == "YES" and relationship_label_normalized:
+        relationships.append(
+            {
+                "label": relationship_label_normalized,
+                "related": True,
+            }
+        )
+
+    return {
+        "entities": entities,
+        "entity_type": entity_type,
+        "relationships": relationships,
+        "related": related_normalized == "YES",
+        "relationship_label": relationship_label_normalized,
+    }
 
 
 def extract_stix_from_report(
@@ -247,21 +335,31 @@ def extract_stix_from_report(
         timeout_seconds=timeout_seconds,
     )
     cleaned_input = clean_paragraph(report_text)
-    prompt = build_prompt(instruction=instruction, input_text=cleaned_input)
-    params = TASK_PARAMETERS["T1"]
+    task_results = {}
+    for task in ("T1", "T2", "T3", "T4"):
+        task_results[task] = run_task_prediction(
+            backend=backend,
+            input_text=cleaned_input,
+            model_name=model_name,
+            task=task,
+            instruction=instruction if task == "T1" else None,
+        )
 
-    try:
-        raw_prediction = backend.complete(prompt=prompt, model_name=model_name, params=params)
-    except Exception as e:
-        logging.warning(f"Model call failed for input hash {hash(report_text)}: {e}")
-        raw_prediction = ""
-
-    parsed_entities = parse_response(raw_prediction, "T1")
+    parsed_entities = task_results["T1"]["parsed_prediction"]
     final_stix_entities = post_process_t1_prediction(cleaned_input, parsed_entities)
+
+    stix_output = build_stix_output(
+        entities=final_stix_entities,
+        entity_type=task_results["T2"]["parsed_prediction"],
+        related=task_results["T3"]["parsed_prediction"],
+        relationship_label=task_results["T4"]["parsed_prediction"],
+        input_text=cleaned_input,
+    )
 
     return {
         "input": cleaned_input,
-        "raw_prediction": raw_prediction,
+        "raw_prediction": task_results["T1"]["raw_prediction"],
         "stix_entities": parsed_entities,
         "final_stix_entities": final_stix_entities,
+        "stix_output": stix_output,
     }
