@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import socket
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set
 from urllib import request
@@ -197,18 +198,23 @@ class OllamaBackend(ModelBackend):
             return data.get("message", {}).get("content", "") or ""
         except URLError as exc:
             raise RuntimeError(f"Failed to reach Ollama at {self.base_url}: {exc}") from exc
-        except TimeoutError as exc:
+        except socket.timeout as exc:
             raise RuntimeError(
                 f"Ollama request timed out at {self.base_url} after {self.timeout_seconds} seconds."
             ) from exc
 
 
-def create_backend(provider: str = "ollama", api_key: str = "dummy", base_url: Optional[str] = None) -> ModelBackend:
+def create_backend(
+    provider: str = "ollama",
+    api_key: str = "dummy",
+    base_url: Optional[str] = None,
+    timeout_seconds: int = 60,
+) -> ModelBackend:
     provider_normalized = (provider or "ollama").strip().lower()
     if provider_normalized == "openai":
         return OpenAICompatibleBackend(api_key=api_key, base_url=base_url or "http://localhost:3216/v1")
     if provider_normalized == "ollama":
-        return OllamaBackend(base_url=base_url or "http://localhost:11434")
+        return OllamaBackend(base_url=base_url or "http://localhost:11434", timeout_seconds=timeout_seconds)
     raise ValueError(f"Unsupported provider: {provider}. Use 'ollama' or 'openai'.")
 
 
@@ -231,9 +237,15 @@ def extract_stix_from_report(
     provider: str = "ollama",
     base_url: Optional[str] = None,
     api_key: str = "dummy",
+    timeout_seconds: int = 60,
     instruction: str = DEFAULT_T1_INSTRUCTION,
 ) -> Dict[str, Any]:
-    backend = create_backend(provider=provider, api_key=api_key, base_url=base_url)
+    backend = create_backend(
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
     cleaned_input = clean_paragraph(report_text)
     prompt = build_prompt(instruction=instruction, input_text=cleaned_input)
     params = TASK_PARAMETERS["T1"]
