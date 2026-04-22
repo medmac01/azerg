@@ -31,8 +31,8 @@ DEFAULT_T1_INSTRUCTION = (
 def clean_paragraph(paragraph: str) -> str:
     if not isinstance(paragraph, str):
         return ""
-    paragraph = paragraph.encode("utf-8").decode()
     paragraph = paragraph.replace("[.]", ".")
+    paragraph = paragraph.replace(".]", ".")
     paragraph = paragraph.replace("[:]", ":")
     paragraph = paragraph.replace("hxxps", "https")
     paragraph = paragraph.replace("hXXps", "https")
@@ -170,8 +170,9 @@ class OpenAICompatibleBackend(ModelBackend):
 
 
 class OllamaBackend(ModelBackend):
-    def __init__(self, base_url: str = "http://localhost:11434"):
+    def __init__(self, base_url: str = "http://localhost:11434", timeout_seconds: int = 60):
         self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
 
     def complete(self, prompt: str, model_name: str, params: Dict[str, Any]) -> str:
         payload = {
@@ -191,13 +192,15 @@ class OllamaBackend(ModelBackend):
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=60) as resp:
+            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             return data.get("message", {}).get("content", "") or ""
         except URLError as exc:
             raise RuntimeError(f"Failed to reach Ollama at {self.base_url}: {exc}") from exc
         except TimeoutError as exc:
-            raise RuntimeError(f"Ollama request timed out at {self.base_url}.") from exc
+            raise RuntimeError(
+                f"Ollama request timed out at {self.base_url} after {self.timeout_seconds} seconds."
+            ) from exc
 
 
 def create_backend(provider: str = "ollama", api_key: str = "dummy", base_url: Optional[str] = None) -> ModelBackend:
