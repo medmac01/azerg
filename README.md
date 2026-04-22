@@ -38,24 +38,52 @@ Execute the `run_inference.py` script to generate predictions from a model. The 
 **Usage**:
 
 ```bash
-python run_inference.py --task <TASK> --dataset <DATASET> --model_name <MODEL_NAME> --api_key <YOUR_API_KEY>
+python run_inference.py --task <TASK> --dataset <DATASET> --model_name <MODEL_NAME> --provider <PROVIDER> [--base_url <BASE_URL>] [--api_key <YOUR_API_KEY>]
 ```
 
 - `<TASK>`: `T1`, `T2`, `T3`, or `T4`.
 
 - `<DATASET>`: `azerg` or `annoctr`.
 
-- `<MODEL_NAME>`: The model to use for inference (e.g., `QCRI/AZERG-MixTask-Mistral` or `gpt-4o`).
+- `<MODEL_NAME>`: The model to use for inference (e.g., `qwen2.5:7b` for Ollama, `QCRI/AZERG-MixTask-Mistral`, or `gpt-4o`).
 
-- `<YOUR_API_KEY>`: Your OpenAI-compatible API key.
+- `<PROVIDER>`: `ollama` (default) or `openai`.
+
+- `<BASE_URL>`: Optional provider URL. Defaults are:
+  - Ollama: `http://localhost:11434`
+  - OpenAI-compatible/vLLM: `http://localhost:3216/v1`
+
+- `<YOUR_API_KEY>`: Used only for `--provider openai`.
 
 **Example**:
 
 ```bash
-python run_inference.py --task T1 --dataset azerg --model_name QCRI/AZERG-MixTask-Mistral
+python run_inference.py --task T1 --dataset azerg --model_name qwen2.5:7b --provider ollama
 ```
 
-### 4. Run Evaluation
+Use OpenAI-compatible endpoint (including vLLM):
+
+```bash
+python run_inference.py --task T1 --dataset azerg --model_name QCRI/AZERG-MixTask-Mistral --provider openai --base_url http://localhost:3216/v1 --api_key <YOUR_API_KEY>
+```
+
+### 4. Reusable lightweight CTI → STIX pipeline module
+
+This repo now exposes a lightweight module in `azerg_pipeline.py` so you can plug it into other projects directly.
+
+```python
+from azerg_pipeline import extract_stix_from_report
+
+result = extract_stix_from_report(
+    report_text=cti_report_text,
+    model_name="qwen2.5:7b",
+    provider="ollama",
+)
+
+final_stix = result["final_stix_entities"]
+```
+
+### 5. Run Evaluation
 
 Use the `evaluate_results.py` script to calculate performance metrics from the generated result files. The script appends a summary to `results.csv`.
 
