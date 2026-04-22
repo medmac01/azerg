@@ -4,6 +4,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set
 from urllib import request
+from urllib.error import URLError
 
 try:
     from ioc_finder import find_iocs
@@ -32,7 +33,6 @@ def clean_paragraph(paragraph: str) -> str:
         return ""
     paragraph = paragraph.encode("utf-8").decode()
     paragraph = paragraph.replace("[.]", ".")
-    paragraph = paragraph.replace(".]", ".")
     paragraph = paragraph.replace("[:]", ":")
     paragraph = paragraph.replace("hxxps", "https")
     paragraph = paragraph.replace("hXXps", "https")
@@ -190,9 +190,14 @@ class OllamaBackend(ModelBackend):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data.get("message", {}).get("content", "") or ""
+        try:
+            with request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data.get("message", {}).get("content", "") or ""
+        except URLError as exc:
+            raise RuntimeError(f"Failed to reach Ollama at {self.base_url}: {exc}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"Ollama request timed out at {self.base_url}.") from exc
 
 
 def create_backend(provider: str = "ollama", api_key: str = "dummy", base_url: Optional[str] = None) -> ModelBackend:
